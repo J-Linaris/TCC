@@ -122,8 +122,8 @@ def data_process(data_path, name, patch_size, stride, mode, write_png=False):
     if mode == "training":
         img_patch = get_patch(img_list, patch_size, stride)
         gt_patch = get_patch(gt_list, patch_size, stride)
-        save_patch(img_patch, save_path, "img_patch", name)
-        save_patch(gt_patch, save_path, "gt_patch", name)
+        save_patch(img_patch, save_path, "img_patch", name, write_png, save_path_png)
+        save_patch(gt_patch, save_path, "gt_patch", name, write_png, save_path_png)
     elif mode == "test":
         if name != "CHUAC":
             img_list = get_square(img_list, name)
@@ -165,11 +165,20 @@ def get_patch(imgs_list, patch_size, stride):
     return image_list
 
 
-def save_patch(imgs_list, path, type, name):
+def save_patch(imgs_list, path, type, name, write_png=False, save_path_png=""):
     for i, sub in enumerate(imgs_list):
         with open(file=os.path.join(path, f'{type}_{i}.pkl'), mode='wb') as file:
             pickle.dump(np.array(sub), file)
-            print(f'save {name} {type} : {type}_{i}.pkl')
+            # print(f'save {name} {type} : {type}_{i}.pkl')
+        
+        # Optionally writes the file in png format
+        if write_png:
+            # Creates a separate png dir
+            with open(file=os.path.join(save_path_png, f'{type}_{i}.png'), mode='wb') as file:
+                pilImg = ToPILImage()(sub)
+                pilImg.save(file)
+
+    print(f'save patch completed! saved {len(imgs_list)} imgs')
 
 def save_each_image(imgs_list, path, type, name, write_png=False, save_path_png=""):
     for i, sub in enumerate(imgs_list):
@@ -213,7 +222,7 @@ if __name__ == '__main__':
     with open('config.yaml', encoding='utf-8') as file:
         CFG = safe_load(file)  # 为列表类型
 
-    # data_process(args.dataset_path, args.dataset_name,
-    #              args.patch_size, args.stride, "training")
+    data_process(args.dataset_path, args.dataset_name,
+                 args.patch_size, args.stride, "training", args.write_png == "true")
     data_process(args.dataset_path, args.dataset_name,
                  args.patch_size, args.stride, "test", args.write_png == "true")
