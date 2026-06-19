@@ -16,7 +16,7 @@ import ttach as tta
 
 
 class Trainer:
-    def __init__(self, model, CFG=None, loss=None, train_loader=None, val_loader=None):
+    def __init__(self, model, CFG=None, loss=None, train_loader=None, val_loader=None, use_thin_vessels_weights=False):
         self.CFG = CFG
         if self.CFG.amp is True:
             self.scaler = torch.cuda.amp.GradScaler(enabled=True)
@@ -34,10 +34,14 @@ class Trainer:
         self.writer = tensorboard.SummaryWriter(self.checkpoint_dir)
         dir_exists(self.checkpoint_dir)
         cudnn.benchmark = True
+        self.use_thin_vessels_weights = use_thin_vessels_weights
 
     def train(self):
         for epoch in range(1, self.CFG.epochs + 1):
-            self._train_epoch(epoch)
+            if self.use_thin_vessels_weights:
+                self._train_epoch_with_weight_masks(epoch)
+            else:
+                self._train_epoch(epoch)
             if self.val_loader is not None and epoch % self.CFG.val_per_epochs == 0:
                 results = self._valid_epoch(epoch)
                 logger.info(f'## Info for epoch {epoch} ## ')
@@ -61,12 +65,66 @@ class Trainer:
                 with torch.cuda.amp.autocast(enabled=True):
                     pre = self.model(img)
                     loss = self.loss(pre, gt)
+
                 self.scaler.scale(loss).backward()
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 pre = self.model(img)
                 loss = self.loss(pre, gt)
+                loss.backward()
+                self.optimizer.step()
+            self.total_loss.update(loss.item())
+            self.batch_time.update(time.time() - tic)
+            
+            self._metrics_update(
+                *get_metrics(pre, gt, threshold=self.CFG.threshold).values())
+            tbar.set_description(
+                'TRAIN ({}) | Loss: {:.4f} | AUC {:.4f} F1 {:.4f} Acc {:.4f}  Sen {:.4f} Spe {:.4f} Pre {:.4f} IOU {:.4f} |B {:.2f} D {:.2f} |'.format(
+                    epoch, self.total_loss.average, *self._metrics_ave().values(), self.batch_time.average, self.data_time.average))
+            tic = time.time()
+        self.writer.add_scalar(
+            f'{wrt_mode}/loss', self.total_loss.average, epoch)
+        for k, v in list(self._metrics_ave().items())[:-1]:
+            self.writer.add_scalar(f'{wrt_mode}/{k}', v, epoch)
+        for i, opt_group in enumerate(self.optimizer.param_groups):
+            self.writer.add_scalar(
+                f'{wrt_mode}/Learning_rate_{i}', opt_group['lr'], epoch)
+        self.lr_scheduler.step()
+    
+    def _train_epoch_with_weight_masks(self, epoch):
+        self.model.train()
+        wrt_mode = 'train'
+        self._reset_metrics()
+        tbar = tqdm(self.train_loader, ncols=160)
+        tic = time.time()
+        for w, img, gt in tbar:
+            self.data_time.update(time.time() - tic)
+            img = img.cuda(non_blocking=True)
+            gt = gt.cuda(non_blocking=True)
+            self.optimizer.zero_grad()
+            if self.CFG.amp is True:
+                with torch.cuda.amp.autocast(enabled=True):
+                    pre = self.model(img)
+                    loss = self.loss(pre, gt)
+
+                    # Apply weights for thin vessels (depends on reduction = 'none' when initializing the loss)
+                    assert loss.ndim == w.ndim, f"Loss dimension is {loss.ndim}, but expected same as weight dimension ({w.ndim}) -> reduction = 'none' when initializing the loss"
+                    loss = loss * w # element-wise mult
+                    loss = loss.mean()
+
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                pre = self.model(img)
+                loss = self.loss(pre, gt)
+
+                # Apply weights for thin vessels (depends on reduction = 'none' when initializing the loss)
+                assert loss.ndim == w.ndim, f"Loss dimension is {loss.ndim}, but expected same as weight dimension ({w.ndim}) -> reduction = 'none' when initializing the loss"
+                loss = loss * w # element-wise mult
+                loss = loss.mean()
+
                 loss.backward()
                 self.optimizer.step()
             self.total_loss.update(loss.item())

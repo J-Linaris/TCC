@@ -1,3 +1,4 @@
 # Ignore pre-trained models weights files
 *.pth
 *.pt
+*experiment.py

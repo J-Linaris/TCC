@@ -10,9 +10,9 @@ from PIL import Image
 from yaml import safe_load
 from torchvision.transforms import Grayscale, Normalize, ToTensor, ToPILImage
 from utils.helpers import dir_exists, remove_files
+from retinal_thin_vessels.weights import get_weight_mask
 
-
-def data_process(data_path, name, patch_size, stride, mode, write_png=False):
+def data_process(data_path, name, patch_size, stride, mode, write_png=False, compute_gt_weights=False):
     save_path = os.path.join(data_path, f"{mode}_pro")
     save_path_png = ""
     if write_png:
@@ -42,6 +42,7 @@ def data_process(data_path, name, patch_size, stride, mode, write_png=False):
         file_list = list(sorted(os.listdir(img_path)))
     img_list = []
     gt_list = []
+    w_list = []
     for i, file in enumerate(file_list):
         if name == "DRIVE":
             img = Image.open(os.path.join(img_path, file))
@@ -118,12 +119,20 @@ def data_process(data_path, name, patch_size, stride, mode, write_png=False):
                 img = Grayscale(1)(img)
                 img_list.append(ToTensor()(img))
                 gt_list.append(ToTensor()(gt))
+        
+        if mode == "training" and compute_gt_weights:
+            # Compute and save weights for gt (arrayOfW[N,1,H,W])
+            w_list.append(torch.from_numpy(get_weight_mask(ToTensor()(gt),weights_function=1)))
+
     img_list = normalization(img_list)
     if mode == "training":
         img_patch = get_patch(img_list, patch_size, stride)
-        gt_patch = get_patch(gt_list, patch_size, stride)
-        save_patch(img_patch, save_path, "img_patch", name, write_png, save_path_png)
-        save_patch(gt_patch, save_path, "gt_patch", name, write_png, save_path_png)
+        gt_patch = get_patch(gt_list, patch_size, stride)     
+        save_patch(img_patch, save_path, "img_patch", name, write_png, save_path_png) #[N,1,H,W]
+        save_patch(gt_patch, save_path, "gt_patch", name, write_png, save_path_png) #[N,1,H,W]
+        if compute_gt_weights: 
+            w_patch = get_patch(w_list,patch_size,stride)
+            save_patch(w_patch, save_path, "w_patch", name) #[N,1,H,W] (extra channel facilitates loss computation)
     elif mode == "test":
         if name != "CHUAC":
             img_list = get_square(img_list, name)
@@ -168,7 +177,9 @@ def get_patch(imgs_list, patch_size, stride):
 def save_patch(imgs_list, path, type, name, write_png=False, save_path_png=""):
     for i, sub in enumerate(imgs_list):
         with open(file=os.path.join(path, f'{type}_{i}.pkl'), mode='wb') as file:
-            pickle.dump(np.array(sub), file)
+            # if "w_patch" in type:
+            #     sub = sub[0] #[1,H,W] -> [H,W]
+            pickle.dump(sub.numpy(), file)
             # print(f'save {name} {type} : {type}_{i}.pkl')
         
         # Optionally writes the file in png format
@@ -179,6 +190,9 @@ def save_patch(imgs_list, path, type, name, write_png=False, save_path_png=""):
                 pilImg.save(file)
 
     print(f'save patch completed! saved {len(imgs_list)} imgs')
+
+# def save_w_patch(w_list, path, type, name):
+#     # Saves the patches in w_list in numpy format
 
 def save_each_image(imgs_list, path, type, name, write_png=False, save_path_png=""):
     for i, sub in enumerate(imgs_list):
@@ -218,11 +232,13 @@ if __name__ == '__main__':
                         help='the size of patch for image partition')
     parser.add_argument('-s', '--stride', default=6,
                         help='the stride of image partition')
+    parser.add_argument('-cw', '--compute_weights', default="false", type=str,
+                        help='flag for computing weights based on vessels thickness')
     args = parser.parse_args()
     with open('config.yaml', encoding='utf-8') as file:
         CFG = safe_load(file)  # 为列表类型
 
     data_process(args.dataset_path, args.dataset_name,
-                 args.patch_size, args.stride, "training", args.write_png == "true")
-    data_process(args.dataset_path, args.dataset_name,
-                 args.patch_size, args.stride, "test", args.write_png == "true")
+                 args.patch_size, args.stride, "training", args.write_png == "true", args.compute_weights == "true")
+    # data_process(args.dataset_path, args.dataset_name,
+    #              args.patch_size, args.stride, "test", args.write_png == "true")

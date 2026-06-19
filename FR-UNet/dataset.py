@@ -4,8 +4,8 @@ import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose, RandomHorizontalFlip, RandomVerticalFlip
 from utils.helpers import Fix_RandomRotation
-from retinal_thin_vessels.weights import get_weight_mask
-
+from PIL import Image
+import numpy as np
 
 class vessel_dataset(Dataset):
     def __init__(self, path, mode, is_val=False, split=None, return_thin_vessels_mask = False):
@@ -27,20 +27,6 @@ class vessel_dataset(Dataset):
             Fix_RandomRotation(),
         ])
         self.return_thin_vessels_mask = return_thin_vessels_mask
-        if return_thin_vessels_mask:
-            # Compute weight masks for all gts
-            # self.w_array = []
-            # for _, file in enumerate(self.img_file):
-            #     file = open(file=os.path.join(self.data_path, "gt" + file[3:]), mode='rb')
-            #     gt = torch.from_numpy(pickle.load(file)).float()
-            #     self.w_array.append(torch.from_numpy(get_weight_mask(gt,1)))
-            
-            # JUST EXPERIMENTING WITH THE DIMENSIONS
-            file = open(file=os.path.join(self.data_path, "gt" + self.img_file[0][3:]), mode='rb')
-            gt = torch.from_numpy(pickle.load(file)).float()
-            w = torch.from_numpy(get_weight_mask(gt,1))
-            print(gt.size())
-            print(w.size())
 
 
 
@@ -49,25 +35,29 @@ class vessel_dataset(Dataset):
         with open(file=os.path.join(self.data_path, img_file), mode='rb') as file:
             img = torch.from_numpy(pickle.load(file)).float()
         gt_file = "gt" + img_file[3:]
+        # if idx == 21606:
+        #     print(img_file) 
+        #     print(gt_file)
         with open(file=os.path.join(self.data_path, gt_file), mode='rb') as file:
             gt = torch.from_numpy(pickle.load(file)).float()
+        if self.return_thin_vessels_mask:
+            w_file = "w" + img_file[3:]
+            with open(file=os.path.join(self.data_path, w_file), mode='rb') as file:
+                w = torch.from_numpy(pickle.load(file)).float()
 
         if self.mode == "training" and not self.is_val:
             seed = torch.seed()
             torch.manual_seed(seed)
-            img = self.transforms(img)
-            torch.manual_seed(seed)
-            gt = self.transforms(gt)
-
+            comb = torch.cat([img,gt],dim=0)
+            
             # Return weight mask for the gt alongside the img and gt
             if self.return_thin_vessels_mask:
-                w = self.w_array[idx]
-                return w, img, gt
-        
-        # Check the dimension returned by img and gt for us to set what we expect the shape of the loss to be (will be the same as the gt shape (and pred))
-        # Probably [1,H,W]
-        print(img.shape) # --> execute once in main() and delete
-        print(gt.shape)
+                comb = torch.cat([w,comb]) #[w,img,gt]
+                comb = self.transforms(comb)
+                return torch.unsqueeze(comb[0],0), torch.unsqueeze(comb[1],0), torch.unsqueeze(comb[2],0)
+            else:
+                comb = self.transforms(comb)
+                return torch.unsqueeze(comb[0],0), torch.unsqueeze(comb[1],0)
         return img, gt
 
     def _select_img(self, file_list):
@@ -84,11 +74,34 @@ class vessel_dataset(Dataset):
 
 def main():
     # UNIT TESTS
-    # Generate weight masks for test dataset
-    dp = "/home/joaolinaris/USP/IC/Projeto_retina/Datasets/CHASEDB1"
-    ds = vessel_dataset(dp, mode="test", return_thin_vessels_mask=True)
-    # a = next(iter(ds))
-    # print(a)
+    # Generate weight masks for test dataset (samples for the Undergraduate Thesis presentation)
+    dp = "/home/joaolinaris/USP/IC/Projeto_retina/Datasets/SAMPLE_CHASEDB1"
+    ds = vessel_dataset(dp, mode="training", return_thin_vessels_mask=True)
+    print(len(ds))
+    for i,(w,img,gt) in enumerate(ds):
+
+        if i == 21606:
+            print(w.shape)
+            print(img.shape)
+            print(gt.shape)
+
+            # img is normalized -> unrestorable: added an if statement to print the file path
+
+            # img = Image.fromarray((255*img[0]).numpy().astype(np.uint8))
+            # img.save("img_patch_sample.png")
+            # gt = Image.fromarray((255*gt[0]).numpy().astype(np.uint8))
+            # gt.save("gt_patch_sample.png")
+            # w = w.numpy()[0]
+            # w = (255*(w-w.min())/(w.max()-w.min())).astype(np.uint8)
+            # w = Image.fromarray(w)
+            # w.save("w_patch_sample.png")
+            # print(torch.unique(w))
+            # print(torch.unique(img))
+            # print(torch.unique(gt))
+            # all working great 
+
+
+
 
 if __name__ == "__main__":
     main()

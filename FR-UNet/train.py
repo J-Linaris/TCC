@@ -10,16 +10,16 @@ from utils import losses
 from utils.helpers import get_instance, seed_torch
 
 
-def main(CFG, data_path, batch_size, with_val=False):
+def main(CFG, data_path, batch_size, with_val=False, use_thin_vessels_weights=False):
     seed_torch()
     if with_val:
-        train_dataset = vessel_dataset(data_path, mode="training", split=0.9)
+        train_dataset = vessel_dataset(data_path, mode="training", split=0.9, return_thin_vessels_mask=use_thin_vessels_weights)
         val_dataset = vessel_dataset(
             data_path, mode="training", split=0.9, is_val=True)
         val_loader = DataLoader(
             val_dataset, batch_size, shuffle=False, num_workers=16, pin_memory=True, drop_last=False)
     else:
-        train_dataset = vessel_dataset(data_path, mode="training")
+        train_dataset = vessel_dataset(data_path, mode="training", return_thin_vessels_mask=use_thin_vessels_weights)
     train_loader = DataLoader(
         train_dataset, batch_size, shuffle=True, num_workers=16, pin_memory=True, drop_last=True)
 
@@ -32,7 +32,8 @@ def main(CFG, data_path, batch_size, with_val=False):
         loss=loss,
         CFG=CFG,
         train_loader=train_loader,
-        val_loader=val_loader if with_val else None
+        val_loader=val_loader if with_val else None,
+        thin_vessels_training=use_thin_vessels_weights
     )
 
     trainer.train()
@@ -45,9 +46,12 @@ if __name__ == '__main__':
     parser.add_argument('-bs', '--batch_size', default=512,
                         help='batch_size for trianing and validation')
     parser.add_argument("--val", help="split training data for validation",
-                        required=False, default=False, action="store_true")
+                        required=False, default=True, action="store_true")
+    # Support for training with focus on thin vessels
+    parser.add_argument("-tv", "--thin_vessels", help="train with thin vessels mask",
+                        required=False, default=False, action="store_false")
     args = parser.parse_args()
 
     with open('config.yaml', encoding='utf-8') as file:
         CFG = Bunch(safe_load(file))
-    main(CFG, args.dataset_path, args.batch_size, args.val)
+    main(CFG, args.dataset_path, args.batch_size, args.val, args.thin_vessels)

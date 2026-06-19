@@ -6,7 +6,7 @@ model:
 loss:
   type: BCELoss
   args:
-    {}
+    reduction: 'none'
 
 optimizer:
   type: Adam
